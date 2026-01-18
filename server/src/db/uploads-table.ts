@@ -1,6 +1,6 @@
 import { and, desc, eq, lte, sql } from "drizzle-orm";
 import { db } from "./db.js";
-import { transaction, uploads } from "./schema.js";
+import { deletionStatusEnum, transaction, uploads } from "./schema.js";
 import { PaginationContext } from "../types.js";
 
 type TransactionData = {
@@ -26,16 +26,15 @@ export const getUserHistory = async (
   page = 1,
   limit = 20,
   ctx?: PaginationContext
-
 ) => {
   try {
-    const userAddress = wallet.toLowerCase()
-    const offset = (page - 1) * limit
+    const userAddress = wallet.toLowerCase();
+    const offset = (page - 1) * limit;
 
     const [{ count }] = await db
       .select({ count: sql<number>`count(*)` })
       .from(uploads)
-      .where(eq(uploads.depositKey, userAddress))
+      .where(eq(uploads.depositKey, userAddress));
 
     const data = await db
       .select()
@@ -43,13 +42,13 @@ export const getUserHistory = async (
       .where(eq(uploads.depositKey, userAddress))
       .orderBy(desc(uploads.createdAt))
       .limit(limit)
-      .offset(offset)
+      .offset(offset);
 
-    const total = Number(count)
-    const totalPages = Math.ceil(total / limit)
+    const total = Number(count);
+    const totalPages = Math.ceil(total / limit);
 
     const buildPageUrl = (p: number) =>
-      `${ctx?.baseUrl}${ctx?.path}?userAddress=${userAddress}&page=${p}&limit=${limit}`
+      `${ctx?.baseUrl}${ctx?.path}?userAddress=${userAddress}&page=${p}&limit=${limit}`;
 
     return {
       data,
@@ -59,40 +58,42 @@ export const getUserHistory = async (
       totalPages,
       next: page < totalPages ? buildPageUrl(page + 1) : null,
       prev: page > 1 ? buildPageUrl(page - 1) : null,
-    }
+    };
   } catch (err) {
-    console.error('Error getting user history', err)
-    return null
+    console.error("Error getting user history", err);
+    return null;
   }
-}
-
-
+};
 
 /**
  * Find deposits that will expire in X days and haven't been warned yet
- * @param daysUntilExpiration - Number of days before expiration to warn (default: 7)
+ * @param daysUntilExpiration - Number of days before expiration to warn is half of the duration days by user or 7 days, whichever is less
  * @returns Array of deposits that need warning emails
  */
 export const getDepositsNeedingWarning = async (
-  daysUntilExpiration: number = 7,
+  daysUntilExpiration: number = 7
 ) => {
   try {
-    const targetDate = new Date();
-    targetDate.setDate(targetDate.getDate() + daysUntilExpiration);
-    const targetDateString = targetDate.toISOString().split("T")[0];
-
     const deposits = await db
       .select()
       .from(uploads)
       .where(
         and(
           eq(uploads.deletionStatus, "active"),
-          lte(sql`DATE(${uploads.expiresAt})`, sql`DATE(${targetDateString})`),
           sql`${uploads.userEmail} IS NOT NULL`,
           sql`${uploads.userEmail} != ''`,
-        ),
+          sql`
+        ${uploads.expiresAt} -
+        (
+          LEAST(
+            ${daysUntilExpiration},
+            (${uploads.durationDays} * 0.5)
+          ) * INTERVAL '1 day'
+        )
+        <= CURRENT_DATE
+      `
+        )
       );
-
     return deposits;
   } catch (err) {
     console.error("Error getting deposits needing warning:", err);
@@ -114,8 +115,8 @@ export const getExpiredDeposits = async () => {
       .where(
         and(
           sql`DATE(${uploads.expiresAt}) < DATE(${now})`,
-          sql`${uploads.deletionStatus} IN ('active', 'warned')`,
-        ),
+          sql`${uploads.deletionStatus} IN ('active', 'warned')`
+        )
       );
 
     return deposits;
@@ -133,7 +134,7 @@ export const getExpiredDeposits = async () => {
  */
 export const updateDeletionStatus = async (
   depositId: number,
-  status: "active" | "warned" | "deleted",
+  status: "active" | "warned" | "deleted"
 ) => {
   try {
     const updated = await db
